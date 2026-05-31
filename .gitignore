@@ -20,6 +20,7 @@ env/
 # Data / outputs
 ads-b_extra.csv
 ads-b_extra_viz.json
+airports.csv
 sim_results/
 checkpoints/
 
