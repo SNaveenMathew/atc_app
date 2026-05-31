@@ -11,6 +11,7 @@ Dependencies (all free / open-source):
 import numpy as np
 import pandas as pd
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import List, Tuple, Optional, Dict
 import math
 
@@ -245,17 +246,35 @@ class ADSBLoader:
 SEPARATION_NM      = 5.0    # ICAO horizontal minimum
 SEPARATION_VERT_FT = 1000   # ICAO vertical minimum
 
-# Known airport gate/runway/taxi areas for the NYC sector.
-# Aircraft on the ground within these areas should not generate airborne conflict warnings.
-AIRPORT_COORDINATES = {
-    "JFK": (40.6413, -73.7781),
-    "LGA": (40.7769, -73.8740),
-    "EWR": (40.6895, -74.1745),
-    "TEB": (40.8501, -74.0608),
-    "HPN": (41.0676, -73.7076),
-}
+AIRPORTS_CSV = "airports.csv"
 GROUND_ALTITUDE_FT = 100
 AIRPORT_RADIUS_NM = 2.0
+
+
+def load_airport_coordinates(path: str = AIRPORTS_CSV) -> Dict[str, Tuple[float, float]]:
+    """Load ICAO airport coordinates from OurAirports airports.csv."""
+    if not Path(path).is_file():
+        return {}
+    try:
+        df = pd.read_csv(path, usecols=["ident", "latitude_deg", "longitude_deg"])
+    except Exception:
+        return {}
+    df = df.dropna(subset=["ident", "latitude_deg", "longitude_deg"])
+    df["ident"] = df["ident"].astype(str).str.strip().str.upper()
+    coords: Dict[str, Tuple[float, float]] = {}
+    for _, row in df.iterrows():
+        ident = row["ident"]
+        if not ident:
+            continue
+        try:
+            coords[ident] = (float(row["latitude_deg"]), float(row["longitude_deg"]))
+        except (TypeError, ValueError):
+            continue
+    return coords
+
+
+AIRPORT_COORDINATES = load_airport_coordinates()
+
 
 def haversine_nm(lat1, lon1, lat2, lon2) -> float:
     """Great-circle distance in nautical miles."""
@@ -273,7 +292,7 @@ def is_on_ground_at_airport(frame: ADSBFrame,
                              radius_nm=AIRPORT_RADIUS_NM,
                              alt_threshold_ft=GROUND_ALTITUDE_FT) -> bool:
     """Return True if a frame is effectively on the ground at a known airport."""
-    if frame.altitude_ft > alt_threshold_ft:
+    if frame.altitude_ft > alt_threshold_ft or not airports:
         return False
     for lat, lon in airports.values():
         if haversine_nm(frame.lat, frame.lon, lat, lon) <= radius_nm:
