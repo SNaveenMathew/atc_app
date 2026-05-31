@@ -30,6 +30,7 @@ from pathlib import Path
 
 import pandas as pd
 import numpy as np
+from typing import Tuple, Optional, Dict
 
 # ── CLI ───────────────────────────────────────────────────────────────────
 ap = argparse.ArgumentParser()
@@ -43,6 +44,8 @@ ap.add_argument("--sector-lat",  type=float, default=40.64)
 ap.add_argument("--sector-lon",  type=float, default=-73.78)
 ap.add_argument("--sector-r",    type=float, default=100.0)
 ap.add_argument("--no-filter",   action="store_true")
+ap.add_argument("--airport-csv", default="airports.csv",
+                help="Path to OurAirports airports.csv for ground-airport filtering")
 args = ap.parse_args()
 
 t0 = time.time()
@@ -153,6 +156,63 @@ for col in ["baro_rate", "geom_rate"]:
         break
 df["vr"] = vr.fillna(0).round(0)
 
+AIRPORTS_CSV = args.airport_csv
+GROUND_ALTITUDE_FT = 100.0
+AIRPORT_RADIUS_NM = 2.0
+
+
+def load_airport_coordinates(path: str) -> Dict[str, Tuple[float, float]]:
+    """Load ICAO airport coordinates from OurAirports airports.csv."""
+    try:
+        df_air = pd.read_csv(path, usecols=["ident", "latitude_deg", "longitude_deg"])
+    except Exception:
+        return {}
+    df_air = df_air.dropna(subset=["ident", "latitude_deg", "longitude_deg"])
+    df_air["ident"] = df_air["ident"].astype(str).str.strip().str.upper()
+    coords: Dict[str, Tuple[float, float]] = {}
+    for _, row in df_air.iterrows():
+        try:
+            coords[row["ident"]] = (
+                float(row["latitude_deg"]), float(row["longitude_deg"]))
+        except (TypeError, ValueError):
+            continue
+    return coords
+
+
+def haversine_nm(lat1, lon1, lat2, lon2) -> float:
+    R = 3440.065
+    phi1, phi2 = math.radians(lat1), math.radians(lat2)
+    dphi = math.radians(lat2 - lat1)
+    dlambda = math.radians(lon2 - lon1)
+    a = (math.sin(dphi/2)**2 +
+         math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2)
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def find_nearest_airport(lat: float, lon: float,
+                         airports: Dict[str, Tuple[float, float]],
+                         radius_nm: float) -> Optional[str]:
+    for ident, (alat, alon) in airports.items():
+        if haversine_nm(lat, lon, alat, alon) <= radius_nm:
+            return ident
+    return None
+
+
+def row_airport_code(lat: float, lon: float, alt: float,
+                     airports: Dict[str, Tuple[float, float]],
+                     radius_nm: float, alt_threshold_ft: float) -> Optional[str]:
+    if pd.isna(lat) or pd.isna(lon) or pd.isna(alt):
+        return None
+    if float(alt) > alt_threshold_ft:
+        return None
+    return find_nearest_airport(float(lat), float(lon), airports, radius_nm)
+
+airport_coords = load_airport_coordinates(AIRPORTS_CSV)
+if airport_coords:
+    print(f"      Loaded {len(airport_coords)} airport locations from {AIRPORTS_CSV}")
+else:
+    print(f"      No airport locations loaded from {AIRPORTS_CSV}; airport-ground detection disabled")
+
 # optional extras kept per-aircraft (first value wins)
 META_COLS = {
     "actype": "aircraft_type", "desc": "description",
@@ -201,6 +261,17 @@ for icao24, grp in groups:
             val = grp[src].dropna()
             if len(val):
                 meta[dst] = val.iloc[0]
+
+    airport_code = None
+    if airport_coords is not None:
+        for _, row in grp.iterrows():
+            airport_code = row_airport_code(row["lat"], row["lon"], row["alt"],
+                                           airport_coords, AIRPORT_RADIUS_NM,
+                                           GROUND_ALTITUDE_FT)
+            if airport_code:
+                meta["at_airport"] = True
+                meta["airport"] = airport_code
+                break
 
     meta["actual"] = waypoints
     aircraft_out.append(meta)
