@@ -1,0 +1,22 @@
+# requirements.txt
+# All packages below are FREE and OPEN-SOURCE
+# Install: pip install -r requirements.txt
+
+# Core numerics
+numpy>=1.24
+pandas>=2.0
+scipy>=1.11
+
+# Deep learning (CPU-only install for portability)
+torch>=2.2          # https://pytorch.org  (BSD-3)
+
+# ADS-B decoding from raw Mode-S / Beast messages (optional)
+pyModeS>=2.10       # https://github.com/junzis/pyModeS  (GPL-3)
+
+# BlueSky ATC simulator (optional but recommended)
+# pip install bluesky-simulator
+# OR: git clone https://github.com/TUDelft-CNS-ATM/bluesky && pip install -e .
+# License: GNU GPL v3
+
+# Visualisation (optional — for plotting training curves)
+matplotlib>=3.8
