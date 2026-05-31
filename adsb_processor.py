@@ -245,6 +245,18 @@ class ADSBLoader:
 SEPARATION_NM      = 5.0    # ICAO horizontal minimum
 SEPARATION_VERT_FT = 1000   # ICAO vertical minimum
 
+# Known airport gate/runway/taxi areas for the NYC sector.
+# Aircraft on the ground within these areas should not generate airborne conflict warnings.
+AIRPORT_COORDINATES = {
+    "JFK": (40.6413, -73.7781),
+    "LGA": (40.7769, -73.8740),
+    "EWR": (40.6895, -74.1745),
+    "TEB": (40.8501, -74.0608),
+    "HPN": (41.0676, -73.7076),
+}
+GROUND_ALTITUDE_FT = 100
+AIRPORT_RADIUS_NM = 2.0
+
 def haversine_nm(lat1, lon1, lat2, lon2) -> float:
     """Great-circle distance in nautical miles."""
     R = 3440.065   # Earth radius in nm
@@ -254,6 +266,20 @@ def haversine_nm(lat1, lon1, lat2, lon2) -> float:
     a = (math.sin(dphi/2)**2 +
          math.cos(phi1)*math.cos(phi2)*math.sin(dlambda/2)**2)
     return 2 * R * math.asin(math.sqrt(a))
+
+
+def is_on_ground_at_airport(frame: ADSBFrame,
+                             airports=AIRPORT_COORDINATES,
+                             radius_nm=AIRPORT_RADIUS_NM,
+                             alt_threshold_ft=GROUND_ALTITUDE_FT) -> bool:
+    """Return True if a frame is effectively on the ground at a known airport."""
+    if frame.altitude_ft > alt_threshold_ft:
+        return False
+    for lat, lon in airports.values():
+        if haversine_nm(frame.lat, frame.lon, lat, lon) <= radius_nm:
+            return True
+    return False
+
 
 def detect_conflicts(frames_at_t: List[ADSBFrame]) -> List[Tuple[str, str, float, float]]:
     """
@@ -267,5 +293,7 @@ def detect_conflicts(frames_at_t: List[ADSBFrame]) -> List[Tuple[str, str, float
             h = haversine_nm(a.lat, a.lon, b.lat, b.lon)
             v = abs(a.altitude_ft - b.altitude_ft)
             if h < SEPARATION_NM and v < SEPARATION_VERT_FT:
+                if is_on_ground_at_airport(a) and is_on_ground_at_airport(b):
+                    continue
                 conflicts.append((a.icao24, b.icao24, h, v))
     return conflicts
