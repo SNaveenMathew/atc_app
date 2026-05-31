@@ -198,7 +198,8 @@ python simulation_integration.py --checkpoint checkpoints/atc_dqn_final.pt --sce
 python training.py --no-synthetic --adsb-csv my_adsb_data.csv
 
 # 6. Download airport coordinates
-Place `airports.csv` from https://ourairports.com/data/ in the repo root to enable airport-ground conflict filtering in `adsb_processor.py`.
+Place `airports.csv` from https://ourairports.com/data/ in the repo root to enable airport-ground conflict filtering in `adsb_processor.py` and airport-ground annotation in `preprocess_adsb.py`.
+`preprocess_adsb.py` will load `airports.csv` automatically by default.
 ```
 
 ## ADS-B Visualization Prep
