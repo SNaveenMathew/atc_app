@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ADS-B Trajectory Visualizer</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap');
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{width:100%;height:100%;overflow:hidden;background:#060d18;font-family:'IBM Plex Sans',system-ui,sans-serif}
+:root{
+  --bg0:#060d18;--bg1:#0d1b2e;--bg2:#142540;--border:#1e3354;
+  --txt0:#e2ecff;--txt1:#8fa8cc;--txt2:#506278;
+  --ac:#4fb3f6;--danger:#f05353;--warn:#f5a623;--ok:#3ddc97;--cong:#a880f5;
+}
+
+/* ── Layout ───────────────────────────────────────────── */
+#app{display:flex;flex-direction:column;height:100vh}
+#header{
+  display:flex;align-items:center;gap:10px;padding:7px 14px;
+  background:var(--bg0);border-bottom:1px solid var(--border);flex-shrink:0;
+}
+#title{font-family:'IBM Plex Mono',monospace;font-size:13px;font-weight:600;
+  color:var(--txt0);letter-spacing:.04em;white-space:nowrap}
+#title em{color:var(--ac);font-style:normal;font-size:11px;margin-left:6px;font-weight:400}
+.hdr-sep{width:1px;height:18px;background:var(--border);margin:0 4px}
+.mode-btns{display:flex;gap:3px}
+.mode-btn{
+  padding:4px 12px;font-size:11px;font-weight:500;letter-spacing:.03em;
+  border:1px solid var(--border);border-radius:4px;background:transparent;
+  color:var(--txt2);cursor:pointer;transition:all .12s;font-family:'IBM Plex Mono',monospace;
+}
+.mode-btn:hover:not(.active){color:var(--txt1);border-color:#3a5470}
+.mode-btn.active{background:rgba(79,179,246,.15);border-color:var(--ac);color:var(--ac)}
+.hdr-right{margin-left:auto;display:flex;align-items:center;gap:6px}
+.import-btn{
+  display:flex;align-items:center;gap:6px;padding:5px 12px;
+  font-size:11px;font-weight:500;font-family:'IBM Plex Mono',monospace;
+  border:1px solid var(--border);border-radius:4px;background:transparent;
+  color:var(--txt1);cursor:pointer;transition:all .12s;
+}
+.import-btn:hover{border-color:#3a5470;color:var(--txt0);background:var(--bg1)}
+.import-btn svg{width:13px;height:13px;flex-shrink:0}
+
+/* ── Map wrap ─────────────────────────────────────────── */
+#map-wrap{position:relative;flex:1;overflow:hidden}
+#map{width:100%;height:100%}
+
+/* ── Label overlay (pointer-events:none) ──────────────── */
+#label-overlay{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  pointer-events:none;z-index:700;
+}
+/* Per-aircraft conflict label */
+.conf-lbl{
+  position:absolute;font-family:'IBM Plex Mono',monospace;font-size:10px;
+  line-height:1.45;padding:5px 8px;border-radius:5px;border:1px solid;
+  white-space:nowrap;display:none;transform:translateX(-50%) translateY(-100%);
+  margin-top:-10px;
+  background:rgba(6,13,24,0.92);backdrop-filter:blur(3px);
+}
+.conf-lbl::after{
+  content:'';position:absolute;bottom:-5px;left:50%;transform:translateX(-50%);
+  width:0;height:0;border-left:5px solid transparent;border-right:5px solid transparent;
+}
+.conf-lbl.lbl-danger{border-color:var(--danger);color:#ffb3b3}
+.conf-lbl.lbl-danger::after{border-top:5px solid var(--danger)}
+.conf-lbl.lbl-warn{border-color:var(--warn);color:#ffe0a3}
+.conf-lbl.lbl-warn::after{border-top:5px solid var(--warn)}
+.conf-lbl.lbl-cong{border-color:var(--cong);color:#d5beff}
+.conf-lbl.lbl-cong::after{border-top:5px solid var(--cong)}
+.lbl-cs{font-weight:600;font-size:11px;margin-bottom:2px}
+.lbl-row{opacity:.9}
+
+/* ── Aircraft popup ───────────────────────────────────── */
+#ac-popup{
+  position:absolute;z-index:850;display:none;
+  width:248px;font-family:'IBM Plex Mono',monospace;
+  background:rgba(6,13,24,0.97);border:1px solid var(--ac);
+  border-radius:8px;box-shadow:0 4px 30px rgba(0,0,0,.7),0 0 0 1px rgba(79,179,246,.1);
+  transform:translateX(-50%) translateY(calc(-100% - 16px));
+}
+#ac-popup::after{
+  content:'';position:absolute;bottom:-7px;left:50%;transform:translateX(-50%);
+  width:0;height:0;border-left:7px solid transparent;border-right:7px solid transparent;
+  border-top:7px solid var(--ac);
+}
+.pop-hdr{
+  display:flex;align-items:center;gap:8px;padding:9px 11px 8px;
+  border-bottom:1px solid var(--border);
+}
+.pop-cs{font-size:14px;font-weight:600;color:var(--txt0)}
+.pop-type{font-size:10px;color:var(--txt2);margin-top:1px}
+.pop-close{
+  margin-left:auto;background:none;border:none;color:var(--txt2);
+  cursor:pointer;font-size:14px;line-height:1;padding:2px;pointer-events:all;
+}
+.pop-close:hover{color:var(--txt0)}
+.pop-body{padding:9px 11px;display:grid;grid-template-columns:1fr 1fr;gap:5px}
+.pop-field{background:var(--bg1);border-radius:4px;padding:5px 7px;border:1px solid var(--border)}
+.pop-lbl{font-size:9px;color:var(--txt2);text-transform:uppercase;letter-spacing:.06em;margin-bottom:2px}
+.pop-val{font-size:12px;color:var(--txt0);font-weight:500}
+.pop-val.pop-ok{color:var(--ok)}
+.pop-val.pop-warn{color:var(--warn)}
+.pop-val.pop-danger{color:var(--danger)}
+.pop-traj{grid-column:1/-1;background:var(--bg2);border-radius:4px;padding:5px 7px;
+  border:1px solid var(--border);display:flex;align-items:center;gap:7px}
+.pop-traj-badge{
+  font-size:9px;font-weight:600;padding:2px 7px;border-radius:10px;
+  border:1px solid;letter-spacing:.05em;
+}
+.traj-over{background:rgba(79,179,246,.12);border-color:var(--ac);color:var(--ac)}
+.traj-dep{background:rgba(61,220,151,.12);border-color:var(--ok);color:var(--ok)}
+.traj-arr{background:rgba(245,166,35,.12);border-color:var(--warn);color:var(--warn)}
+.traj-both{background:rgba(168,128,245,.12);border-color:var(--cong);color:var(--cong)}
+.pop-traj-desc{font-size:10px;color:var(--txt2)}
+
+/* ── Corner HUD panels ────────────────────────────────── */
+#time-hud{
+  position:absolute;top:10px;left:10px;z-index:800;
+  background:rgba(6,13,24,0.9);border:1px solid var(--border);border-radius:7px;
+  padding:8px 12px;font-family:'IBM Plex Mono',monospace;backdrop-filter:blur(4px);
+}
+#utc{font-size:18px;font-weight:600;color:var(--ac);letter-spacing:.06em}
+#sim-info{font-size:9px;color:var(--txt2);margin-top:2px}
+
+#alerts-hud{
+  position:absolute;top:10px;right:10px;z-index:800;
+  display:flex;flex-direction:column;gap:4px;pointer-events:none;max-width:280px;
+}
+.alert-chip{
+  display:flex;align-items:center;gap:7px;padding:5px 10px;border-radius:5px;
+  font-size:11px;font-weight:500;font-family:'IBM Plex Mono',monospace;
+  border:1px solid;backdrop-filter:blur(4px);background:rgba(6,13,24,0.88);
+}
+.chip-danger{border-color:var(--danger);color:#ffb3b3}
+.chip-warn{border-color:var(--warn);color:#ffe0a3}
+.chip-cong{border-color:var(--cong);color:#d5beff}
+.chip-ok{border-color:var(--ok);color:#a3f5d5}
+.chip-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
+.dot-d{background:var(--danger);animation:blink 1s infinite}
+.dot-w{background:var(--warn)}
+.dot-c{background:var(--cong)}
+.dot-ok{background:var(--ok)}
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+
+/* ── Altitude legend ──────────────────────────────────── */
+#alt-legend{
+  position:absolute;bottom:115px;left:10px;z-index:800;display:none;
+  background:rgba(6,13,24,0.92);border:1px solid var(--border);border-radius:7px;
+  padding:10px 12px;backdrop-filter:blur(4px);
+}
+#alt-legend-title{font-size:9px;font-family:'IBM Plex Mono',monospace;
+  text-transform:uppercase;letter-spacing:.06em;color:var(--txt2);margin-bottom:7px}
+#alt-legend-body{display:flex;gap:8px;align-items:stretch}
+#alt-bar{
+  width:11px;border-radius:3px;flex-shrink:0;
+  background:linear-gradient(to bottom,
+    #ef4444 0%,#f97316 20%,#eab308 40%,#22c55e 60%,#06b6d4 80%,#3b82f6 100%);
+}
+#alt-ticks{
+  display:flex;flex-direction:column;justify-content:space-between;
+  font-size:9px;font-family:'IBM Plex Mono',monospace;color:var(--txt1);
+}
+
+/* ── Playback controls ────────────────────────────────── */
+#controls{
+  flex-shrink:0;background:var(--bg0);border-top:1px solid var(--border);
+  padding:9px 14px;display:flex;flex-direction:column;gap:7px;
+}
+#scrub-row{display:flex;align-items:center;gap:9px}
+#scrubber{flex:1;height:3px;accent-color:var(--ac);cursor:pointer}
+.t-lbl{font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--txt2);min-width:56px}
+.t-lbl:last-child{text-align:left}
+#btn-row{display:flex;align-items:center;gap:5px}
+.cbtn{
+  width:30px;height:30px;border:1px solid var(--border);border-radius:5px;
+  background:rgba(20,37,64,.6);color:var(--txt1);cursor:pointer;font-size:12px;
+  display:flex;align-items:center;justify-content:center;transition:all .1s;
+}
+.cbtn:hover{background:var(--bg1);color:var(--txt0);border-color:#3a5470}
+.cbtn.play{width:36px;height:36px;font-size:15px;border-color:rgba(79,179,246,.5);color:var(--ac)}
+.cbtn.play:hover{background:rgba(79,179,246,.12);border-color:var(--ac)}
+.spd-grp{display:flex;gap:3px;margin-left:10px}
+.spdbtn{
+  padding:3px 8px;font-size:10px;font-family:'IBM Plex Mono',monospace;font-weight:500;
+  border:1px solid var(--border);border-radius:3px;background:transparent;
+  color:var(--txt2);cursor:pointer;transition:all .1s;letter-spacing:.02em;
+}
+.spdbtn:hover:not(.active){border-color:#3a5470;color:var(--txt1)}
+.spdbtn.active{background:rgba(79,179,246,.15);border-color:var(--ac);color:var(--ac)}
+.stats{margin-left:auto;display:flex;align-items:center;gap:14px}
+.stat{font-size:10px;font-family:'IBM Plex Mono',monospace;color:var(--txt2)}
+.stat b{color:var(--txt1)}
+
+/* ── Import modal ─────────────────────────────────────── */
+#modal-mask{
+  position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:2000;
+  display:none;align-items:center;justify-content:center;backdrop-filter:blur(3px);
+}
+#modal-mask.open{display:flex}
+#modal{
+  background:var(--bg1);border:1px solid var(--border);border-radius:12px;
+  width:min(640px,95vw);max-height:85vh;overflow-y:auto;padding:22px 24px;
+  font-family:'IBM Plex Sans',system-ui,sans-serif;
+}
+.modal-title{font-size:15px;font-weight:600;color:var(--txt0);margin-bottom:4px}
+.modal-sub{font-size:12px;color:var(--txt2);margin-bottom:16px}
+.modal-tabs{display:flex;gap:0;margin-bottom:14px;border-bottom:1px solid var(--border)}
+.mtab{
+  padding:7px 16px;font-size:12px;font-weight:500;border:none;background:none;
+  color:var(--txt2);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;
+}
+.mtab.active{color:var(--ac);border-bottom-color:var(--ac)}
+.tab-panel{display:none}
+.tab-panel.active{display:block}
+.upload-zone{
+  border:1.5px dashed var(--border);border-radius:8px;padding:28px;
+  text-align:center;cursor:pointer;transition:all .15s;margin-bottom:12px;
+}
+.upload-zone:hover{border-color:#3a5470;background:var(--bg2)}
+.upload-zone input{display:none}
+.upload-icon{font-size:28px;margin-bottom:8px}
+.upload-text{font-size:12px;color:var(--txt1)}
+.upload-hint{font-size:11px;color:var(--txt2);margin-top:4px}
+#paste-area{
+  width:100%;height:140px;background:var(--bg0);border:1px solid var(--border);
+  border-radius:6px;color:var(--txt0);font-family:'IBM Plex Mono',monospace;
+  font-size:11px;padding:10px;resize:none;margin-bottom:10px;
+}
+#paste-area:focus{outline:none;border-color:rgba(79,179,246,.4)}
+.fmt-box{
+  background:var(--bg0);border:1px solid var(--border);border-radius:6px;
+  padding:10px 12px;margin-bottom:12px;
+}
+.fmt-title{font-size:10px;font-family:'IBM Plex Mono',monospace;font-weight:600;
+  color:var(--ac);text-transform:uppercase;letter-spacing:.06em;margin-bottom:6px}
+.fmt-pre{font-size:10px;font-family:'IBM Plex Mono',monospace;color:#7dc4e4;
+  white-space:pre;overflow-x:auto;line-height:1.6}
+.modal-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:14px}
+.btn-cancel{
+  padding:7px 16px;font-size:12px;border:1px solid var(--border);border-radius:5px;
+  background:transparent;color:var(--txt1);cursor:pointer;
+}
+.btn-cancel:hover{background:var(--bg2)}
+.btn-load{
+  padding:7px 18px;font-size:12px;font-weight:500;border:1px solid rgba(79,179,246,.4);
+  border-radius:5px;background:rgba(79,179,246,.15);color:var(--ac);cursor:pointer;
+}
+.btn-load:hover{background:rgba(79,179,246,.25)}
+#load-status{font-size:11px;margin-top:8px;font-family:'IBM Plex Mono',monospace}
+.status-ok{color:var(--ok)}
+.status-err{color:var(--danger)}
+
+/* ── Leaflet overrides ────────────────────────────────── */
+.leaflet-container{background:#0a131f!important}
+.leaflet-control-zoom{border:none!important}
+.leaflet-control-zoom a{
+  background:var(--bg1)!important;color:var(--txt1)!important;
+  border:1px solid var(--border)!important;border-bottom:none!important;font-size:15px!important;
+}
+.leaflet-control-zoom a:last-child{border-bottom:1px solid var(--border)!important}
+.leaflet-control-zoom a:hover{background:var(--bg2)!important;color:var(--txt0)!important}
+.leaflet-control-attribution{
+  background:rgba(6,13,24,.75)!important;color:var(--txt2)!important;font-size:9px!important;
+}
+.leaflet-control-attribution a{color:var(--txt2)!important}
+.ac-icon-wrap{cursor:pointer}
+.ac-svg{display:block;transform-origin:center;transition:transform .4s linear}
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="header">
+    <div id="title">ADS-B VISUALIZER <em>NYC TRACON · 100NM SECTOR</em></div>
+    <div class="hdr-sep"></div>
+    <div class="mode-btns">
+      <button class="mode-btn active" id="btn-actual" onclick="setMode('actual')">ACTUAL</button>
+      <button class="mode-btn" id="btn-sim"    onclick="setMode('sim')">SIM (RL)</button>
+      <button class="mode-btn" id="btn-cmp"    onclick="setMode('compare')">COMPARE</button>
+    </div>
+    <div class="hdr-right">
+      <button class="import-btn" onclick="openModal()">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
+          <path d="M8 2v8M5 7l3 3 3-3M2 11v1a2 2 0 002 2h8a2 2 0 002-2v-1"/>
+        </svg>
+        Import Data
+      </button>
+    </div>
+  </div>
+
+  <div id="map-wrap">
+    <div id="map"></div>
+    <div id="label-overlay"></div>
+
+    <div id="time-hud">
+      <div id="utc">12:00:00Z</div>
+      <div id="sim-info">15 Jan 2024 · NYC TRACON · 40.64°N 73.78°W r=100nm</div>
+    </div>
+
+    <div id="alerts-hud"></div>
+
+    <div id="alt-legend">
+      <div id="alt-legend-title">Altitude (ft)</div>
+      <div id="alt-legend-body">
+        <div id="alt-bar" style="height:130px"></div>
+        <div id="alt-ticks">
+          <span>≥40,000</span><span>30,000</span><span>20,000</span>
+          <span>10,000</span><span>Ground</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Popup (follows aircraft) -->
+    <div id="ac-popup">
+      <div class="pop-hdr">
+        <div>
+          <div class="pop-cs" id="pop-cs">UAL123</div>
+          <div class="pop-type" id="pop-type">Boeing 737-800</div>
+        </div>
+        <button class="pop-close" onclick="closePopup()">✕</button>
+      </div>
+      <div class="pop-body">
+        <div class="pop-field"><div class="pop-lbl">Latitude</div><div class="pop-val" id="pv-lat">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Longitude</div><div class="pop-val" id="pv-lon">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Altitude</div><div class="pop-val" id="pv-alt">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Flight Level</div><div class="pop-val" id="pv-fl">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Gnd Speed</div><div class="pop-val" id="pv-gs">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Air Speed</div><div class="pop-val" id="pv-as">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Heading</div><div class="pop-val" id="pv-hdg">—</div></div>
+        <div class="pop-field"><div class="pop-lbl">Vert Rate</div><div class="pop-val" id="pv-vr">—</div></div>
+        <div class="pop-traj">
+          <div class="pop-traj-badge" id="pv-traj-badge">OVERFLY</div>
+          <div class="pop-traj-desc" id="pv-traj-desc">Transiting sector</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div id="controls">
+    <div id="scrub-row">
+      <span class="t-lbl" id="t-cur">00:00:00</span>
+      <input type="range" id="scrubber" min="0" max="3600" step="1" value="0" oninput="onScrub(this.value)">
+      <span class="t-lbl" id="t-end">01:00:00</span>
+    </div>
+    <div id="btn-row">
+      <button class="cbtn" title="Restart"    onclick="seek(0)">⏮</button>
+      <button class="cbtn" title="Back 30s"   onclick="seek(STATE.t-30)">⏪</button>
+      <button class="cbtn play" id="play-btn" onclick="togglePlay()">▶</button>
+      <button class="cbtn" title="Fwd 30s"    onclick="seek(STATE.t+30)">⏩</button>
+      <button class="cbtn" title="End"        onclick="seek(STATE.dur)">⏭</button>
+      <div class="spd-grp" id="spd-grp">
+        <button class="spdbtn active" onclick="setSpeed(1,this)">1×</button>
+        <button class="spdbtn" onclick="setSpeed(2,this)">2×</button>
+        <button class="spdbtn" onclick="setSpeed(5,this)">5×</button>
+        <button class="spdbtn" onclick="setSpeed(10,this)">10×</button>
+        <button class="spdbtn" onclick="setSpeed(20,this)">20×</button>
+        <button class="spdbtn" onclick="setSpeed(50,this)">50×</button>
+        <button class="spdbtn" onclick="setSpeed(100,this)">100×</button>
+      </div>
+      <div class="stats">
+        <span class="stat" id="stat-ac">In sector: <b>0</b></span>
+        <span class="stat" id="stat-cf">Conflicts: <b>0</b></span>
+        <span class="stat" id="stat-md">Mode: <b>ACTUAL</b></span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Import Modal -->
+<div id="modal-mask">
+  <div id="modal">
+    <div class="modal-title">Import ADS-B Data</div>
+    <div class="modal-sub">Load your collected ADS-B records. Data replaces the synthetic demo.</div>
+    <div class="modal-tabs">
+      <button class="mtab active" onclick="showMTab(0,this)">Upload File</button>
+      <button class="mtab" onclick="showMTab(1,this)">Paste JSON</button>
+      <button class="mtab" onclick="showMTab(2,this)">Format Reference</button>
+    </div>
+    <div class="tab-panel active" id="mtab0">
+      <label class="upload-zone" for="file-inp">
+        <input type="file" id="file-inp" accept=".json,.csv" onchange="onFileLoad(this)">
+        <div class="upload-icon">📡</div>
+        <div class="upload-text">Click or drop your ADS-B file here</div>
+        <div class="upload-hint">Accepts JSON array or CSV · from adsb_processor.py output</div>
+      </label>
+    </div>
+    <div class="tab-panel" id="mtab1">
+      <textarea id="paste-area" placeholder='[{"timestamp":1705320000,"icao24":"a12345","callsign":"UAL123","lat":40.5,"lon":-74.5,"altitude_ft":35000,"speed_kts":280,"heading_deg":90,"vertical_rate_fpm":0},...]'></textarea>
+    </div>
+    <div class="tab-panel" id="mtab2">
+      <div class="fmt-box">
+        <div class="fmt-title">JSON Array (raw ADS-B records)</div>
+        <div class="fmt-pre">[
+  {
+    "timestamp":           1705320000,  <span style="color:#506278">// Unix epoch seconds</span>
+    "icao24":              "a12345",    <span style="color:#506278">// Aircraft hex ID</span>
+    "callsign":            "UAL123",    <span style="color:#506278">// Flight callsign</span>
+    "lat":                 40.5,        <span style="color:#506278">// Latitude °N</span>
+    "lon":                 -74.5,       <span style="color:#506278">// Longitude °E</span>
+    "altitude_ft":         35000,       <span style="color:#506278">// Altitude feet MSL</span>
+    "speed_kts":           280,         <span style="color:#506278">// Ground speed knots</span>
+    "heading_deg":         90,          <span style="color:#506278">// True heading 0-360°</span>
+    "vertical_rate_fpm":   0            <span style="color:#506278">// Vertical rate ft/min</span>
+  }, ...
+]</div>
+      </div>
+      <div class="fmt-box">
+        <div class="fmt-title">CSV (matching Python adsb_processor.py output)</div>
+        <div class="fmt-pre">timestamp,icao24,callsign,lat,lon,altitude_ft,speed_kts,heading_deg,vertical_rate_fpm
+1705320000,a12345,UAL123,40.5,-74.5,35000,280,90,0
+1705320010,a12345,UAL123,40.501,-74.496,35000,281,90,0</div>
+      </div>
+    </div>
+    <div id="load-status"></div>
+    <div id="parse-progress" style="display:none;margin-top:8px">
+      <div style="height:3px;background:var(--border);border-radius:2px;overflow:hidden">
+        <div id="parse-bar" style="height:100%;background:var(--ac);width:0%;transition:width .2s"></div>
+      </div>
+      <div id="parse-label" style="font-size:10px;color:var(--txt2);font-family:'IBM Plex Mono',monospace;margin-top:4px">Parsing…</div>
+    </div>
+    <div class="modal-btns">
+      <button class="btn-cancel" onclick="closeModal()">Cancel</button>
+      <button class="btn-load"   onclick="doLoad()">Load Data</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ════════════════════════════════════════════════════════════
+// CONSTANTS
+// ════════════════════════════════════════════════════════════
+const CFG = {
+  LAT0: 40.64, LON0: -73.78, R_NM: 100,
+  SEP_NM: 5, SEP_FT: 1000,
+  ALERT_NM: 8, ALERT_FT: 1500,
+  CONG_NM: 25, CONG_N: 4,
+  TRAIL_S: 300,
+  START_EPOCH: Date.UTC(2024,0,15,12,0,0),
+};
+const COMPASS=['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSW','SW','WSW','W','WNW','NW','NNW'];
+const TYPE_MODEL={B737:'Boeing 737',B738:'Boeing 737-800',B739:'Boeing 737-900',
+  A319:'Airbus A319',A320:'Airbus A320',A321:'Airbus A321',B757:'Boeing 757-200',
+  B763:'Boeing 767-300',E175:'Embraer 175',B744:'Boeing 747-400',CRJ2:'CRJ-200',MD11:'MD-11'};
+
+const STATE = {t:0, dur:3600, playing:false, speed:1, selId:null, mode:'actual', lastWall:null};
+
+// ════════════════════════════════════════════════════════════
+// UTILITIES
+// ════════════════════════════════════════════════════════════
+function havNm(la1,lo1,la2,lo2){
+  const R=3440.065,φ1=la1*Math.PI/180,φ2=la2*Math.PI/180;
+  const dφ=(la2-la1)*Math.PI/180,dλ=(lo2-lo1)*Math.PI/180;
+  const a=Math.sin(dφ/2)**2+Math.cos(φ1)*Math.cos(φ2)*Math.sin(dλ/2)**2;
+  return 2*R*Math.asin(Math.sqrt(a));
+}
+function brng(la1,lo1,la2,lo2){
+  const φ1=la1*Math.PI/180,φ2=la2*Math.PI/180,dλ=(lo2-lo1)*Math.PI/180;
+  return (Math.atan2(Math.sin(dλ)*Math.cos(φ2),
+    Math.cos(φ1)*Math.sin(φ2)-Math.sin(φ1)*Math.cos(φ2)*Math.cos(dλ))*180/Math.PI+360)%360;
+}
+function lerp(a,b,f){return a+f*(b-a)}
+function inSector(la,lo){return havNm(la,lo,CFG.LAT0,CFG.LON0)<=CFG.R_NM}
+function fmtT(s){const h=s/3600|0,m=(s%3600)/60|0,ss=s%60|0;return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(ss).padStart(2,'0')}`}
+function utcOf(t){const d=new Date(CFG.START_EPOCH+t*1000);return `${String(d.getUTCHours()).padStart(2,'0')}:${String(d.getUTCMinutes()).padStart(2,'0')}:${String(d.getUTCSeconds()).padStart(2,'0')}Z`}
+function hdgCompass(h){return COMPASS[Math.round(((h%360)+360)%360/22.5)%16]}
+
+// Altitude → colour  (blue=low → green → yellow → red=high)
+function altColor(ft){
+  const stops=[
+    {a:0,     c:[59, 130,246]},
+    {a:8000,  c:[6,  182,212]},
+    {a:18000, c:[34, 197,128]},
+    {a:28000, c:[234,179, 8 ]},
+    {a:36000, c:[249,115, 22]},
+    {a:42000, c:[239, 68, 68]},
+  ];
+  const v=Math.max(0,Math.min(42000,ft));
+  let i=stops.findIndex(s=>s.a>v);
+  if(i<1) i=1;
+  if(i>=stops.length) i=stops.length-1;
+  const a=stops[i-1],b=stops[i],f=(v-a.a)/(b.a-a.a);
+  const r=Math.round(lerp(a.c[0],b.c[0],f));
+  const g=Math.round(lerp(a.c[1],b.c[1],f));
+  const bl=Math.round(lerp(a.c[2],b.c[2],f));
+  return `rgb(${r},${g},${bl})`;
+}
+
+// Trajectory type from waypoints
+function trajType(wpts){
+  if(!wpts||wpts.length<2) return 'OVERFLY';
+  const dep=wpts[0].alt<1500;
+  const arr=wpts[wpts.length-1].alt<1500;
+  if(dep&&arr) return 'BOTH';
+  if(dep) return 'DEPARTURE';
+  if(arr) return 'ARRIVAL';
+  return 'OVERFLY';
+}
+const TRAJ_META={
+  OVERFLY: {cls:'traj-over',label:'OVERFLY',desc:'Transiting sector'},
+  DEPARTURE:{cls:'traj-dep', label:'DEPARTURE',desc:'Departs from within sector'},
+  ARRIVAL:  {cls:'traj-arr', label:'ARRIVAL',desc:'Arrives within sector'},
+  BOTH:     {cls:'traj-both',label:'DEP + ARR',desc:'Both departs & arrives'},
+};
+
+// Interpolate waypoints at time t  —  O(log n) binary search
+function interp(wpts,t){
+  if(!wpts||wpts.length===0) return null;
+  if(t<wpts[0].t||t>wpts[wpts.length-1].t) return null;
+  let lo=0,hi=wpts.length-1;
+  while(lo<hi-1){const mid=(lo+hi)>>1;if(wpts[mid].t<=t)lo=mid;else hi=mid;}
+  const a=wpts[lo],b=wpts[hi];
+  const span=b.t-a.t,f=span>0?(t-a.t)/span:0;
+  return{
+    lat:lerp(a.lat,b.lat,f),lon:lerp(a.lon,b.lon,f),
+    alt:Math.max(0,lerp(a.alt,b.alt,f)),
+    spd:lerp(a.spd,b.spd,f),
+    hdg:a.hdg!=null?lerp(a.hdg,b.hdg,f):brng(a.lat,a.lon,b.lat,b.lon),
+    vr:a.vr!=null?lerp(a.vr,b.vr,f):(span>0?(b.alt-a.alt)/(span/60):0),
+  };
+}
+
+// ════════════════════════════════════════════════════════════
+// SYNTHETIC AIRCRAFT DATA  (replaced on import)
+// ════════════════════════════════════════════════════════════
+// All aircraft: waypoints_actual (mandatory), waypoints_sim (optional for compare mode)
+// t=0 relative to simulation start. Conflicts are baked into actual tracks.
+let AIRCRAFT=[
+  // UAL123 – eastbound FL350, HEAD-ON conflict with NKS505 ~t=560s
+  {id:'UAL123',callsign:'UAL123',type:'B738',airline:'United Airlines',
+   actual:[{t:0,lat:40.64,lon:-76.2,alt:35000,spd:280,hdg:90,vr:0},{t:3600,lat:40.64,lon:-71.3,alt:35000,spd:280,hdg:90,vr:0}],
+   sim:[   {t:0,lat:40.64,lon:-76.2,alt:35000,spd:280,hdg:90,vr:0},{t:500,lat:40.64,lon:-74.82,alt:35000,spd:280,hdg:90,vr:0},
+            {t:620,lat:40.68,lon:-74.55,alt:37000,spd:276,hdg:89,vr:800},{t:3600,lat:40.72,lon:-71.3,alt:37000,spd:276,hdg:90,vr:0}]},
+  // NKS505 – westbound FL350
+  {id:'NKS505',callsign:'NKS505',type:'A320',airline:'Spirit Airlines',
+   actual:[{t:0,lat:40.62,lon:-71.4,alt:35000,spd:275,hdg:270,vr:0},{t:3600,lat:40.62,lon:-76.3,alt:35000,spd:275,hdg:270,vr:0}],
+   sim:[   {t:0,lat:40.62,lon:-71.4,alt:35000,spd:275,hdg:270,vr:0},{t:3600,lat:40.62,lon:-76.3,alt:35000,spd:275,hdg:270,vr:0}]},
+  // DAL456 – southbound FL290, CROSSING conflict with UAL404 ~t=700s
+  {id:'DAL456',callsign:'DAL456',type:'A320',airline:'Delta Air Lines',
+   actual:[{t:0,lat:42.1,lon:-74.25,alt:29000,spd:265,hdg:180,vr:0},{t:3600,lat:39.2,lon:-74.25,alt:29000,spd:265,hdg:180,vr:0}],
+   sim:[   {t:0,lat:42.1,lon:-74.25,alt:29000,spd:265,hdg:180,vr:0},{t:600,lat:40.9,lon:-74.25,alt:29000,spd:265,hdg:180,vr:0},
+            {t:720,lat:40.75,lon:-74.25,alt:31000,spd:263,hdg:180,vr:600},{t:3600,lat:39.2,lon:-74.25,alt:31000,spd:263,hdg:180,vr:0}]},
+  // UAL404 – eastbound FL290
+  {id:'UAL404',callsign:'UAL404',type:'B737',airline:'United Airlines',
+   actual:[{t:300,lat:40.58,lon:-76.3,alt:29000,spd:272,hdg:90,vr:0},{t:3600,lat:40.62,lon:-71.4,alt:29000,spd:272,hdg:90,vr:0}],
+   sim:[   {t:300,lat:40.58,lon:-76.3,alt:29000,spd:272,hdg:90,vr:0},{t:3600,lat:40.62,lon:-71.4,alt:29000,spd:272,hdg:90,vr:0}]},
+  // AAL101 – DEPARTURE from EWR
+  {id:'AAL101',callsign:'AAL101',type:'B757',airline:'American Airlines',
+   actual:[{t:0,lat:40.693,lon:-74.174,alt:0,spd:0,hdg:40,vr:0},{t:90,lat:40.71,lon:-74.16,alt:2500,spd:160,hdg:40,vr:2000},
+            {t:300,lat:40.78,lon:-74.09,alt:9000,spd:240,hdg:38,vr:1800},{t:600,lat:40.92,lon:-73.95,alt:20000,spd:270,hdg:35,vr:1200},
+            {t:900,lat:41.08,lon:-73.80,alt:27000,spd:280,hdg:32,vr:600},{t:1200,lat:41.25,lon:-73.65,alt:30000,spd:283,hdg:32,vr:0},
+            {t:2400,lat:42.3,lon:-73.0,alt:30000,spd:283,hdg:32,vr:0}],
+   sim:[   {t:0,lat:40.693,lon:-74.174,alt:0,spd:0,hdg:40,vr:0},{t:90,lat:40.712,lon:-74.158,alt:2600,spd:162,hdg:40,vr:2100},
+            {t:300,lat:40.782,lon:-74.085,alt:9200,spd:242,hdg:38,vr:1850},{t:600,lat:40.925,lon:-73.945,alt:20200,spd:272,hdg:35,vr:1200},
+            {t:900,lat:41.085,lon:-73.795,alt:27200,spd:282,hdg:32,vr:600},{t:1200,lat:41.255,lon:-73.645,alt:30200,spd:285,hdg:32,vr:0},
+            {t:2400,lat:42.3,lon:-73.0,alt:30200,spd:285,hdg:32,vr:0}]},
+  // JBU202 – ARRIVAL at JFK
+  {id:'JBU202',callsign:'JBU202',type:'A321',airline:'JetBlue Airways',
+   actual:[{t:0,lat:39.6,lon:-73.5,alt:22000,spd:265,hdg:320,vr:-800},{t:360,lat:40.1,lon:-73.85,alt:14000,spd:240,hdg:310,vr:-1000},
+            {t:720,lat:40.4,lon:-74.05,alt:8000,spd:210,hdg:295,vr:-900},{t:1000,lat:40.56,lon:-73.92,alt:3500,spd:185,hdg:220,vr:-700},
+            {t:1200,lat:40.64,lon:-73.79,alt:1000,spd:165,hdg:220,vr:-600},{t:1340,lat:40.641,lon:-73.778,alt:0,spd:0,hdg:220,vr:0}],
+   sim:[   {t:0,lat:39.6,lon:-73.5,alt:22000,spd:265,hdg:320,vr:-800},{t:360,lat:40.1,lon:-73.85,alt:14000,spd:238,hdg:310,vr:-1000},
+            {t:720,lat:40.4,lon:-74.05,alt:8000,spd:208,hdg:295,vr:-900},{t:1000,lat:40.56,lon:-73.92,alt:3500,spd:183,hdg:220,vr:-700},
+            {t:1200,lat:40.64,lon:-73.79,alt:1000,spd:163,hdg:220,vr:-600},{t:1360,lat:40.641,lon:-73.778,alt:0,spd:0,hdg:220,vr:0}]},
+  // SWA789 – SW to NE FL330
+  {id:'SWA789',callsign:'SWA789',type:'B738',airline:'Southwest Airlines',
+   actual:[{t:0,lat:39.5,lon:-75.5,alt:33000,spd:278,hdg:48,vr:0},{t:1800,lat:41.0,lon:-73.7,alt:33000,spd:278,hdg:48,vr:0},
+            {t:3000,lat:41.8,lon:-72.6,alt:33000,spd:278,hdg:48,vr:0}],
+   sim:[   {t:0,lat:39.5,lon:-75.5,alt:33000,spd:274,hdg:48,vr:0},{t:1800,lat:41.0,lon:-73.7,alt:33000,spd:274,hdg:48,vr:0},
+            {t:3000,lat:41.8,lon:-72.6,alt:33000,spd:274,hdg:48,vr:0}]},
+  // FDX303 – FL380 late overfly
+  {id:'FDX303',callsign:'FDX303',type:'B763',airline:'FedEx Express',
+   actual:[{t:900,lat:41.4,lon:-76.2,alt:38000,spd:295,hdg:95,vr:0},{t:3600,lat:41.4,lon:-71.0,alt:38000,spd:295,hdg:95,vr:0}],
+   sim:[   {t:900,lat:41.4,lon:-76.2,alt:38000,spd:295,hdg:95,vr:0},{t:3600,lat:41.4,lon:-71.0,alt:38000,spd:295,hdg:95,vr:0}]},
+  // SKW707 – regional S→N FL220
+  {id:'SKW707',callsign:'SKW707',type:'E175',airline:'SkyWest Airlines',
+   actual:[{t:500,lat:39.3,lon:-74.5,alt:22000,spd:245,hdg:5,vr:0},{t:2500,lat:41.8,lon:-74.3,alt:22000,spd:245,hdg:5,vr:0}],
+   sim:[   {t:500,lat:39.3,lon:-74.5,alt:22000,spd:245,hdg:5,vr:0},{t:2500,lat:41.8,lon:-74.3,alt:22000,spd:245,hdg:5,vr:0}]},
+  // AAL606 – adds to congestion around core
+  {id:'AAL606',callsign:'AAL606',type:'B738',airline:'American Airlines',
+   actual:[{t:0,lat:41.8,lon:-72.6,alt:37000,spd:268,hdg:258,vr:0},{t:1800,lat:40.2,lon:-74.9,alt:37000,spd:268,hdg:258,vr:0},
+            {t:3600,lat:39.0,lon:-76.2,alt:37000,spd:268,hdg:258,vr:0}],
+   sim:[   {t:0,lat:41.8,lon:-72.6,alt:37000,spd:268,hdg:258,vr:0},{t:1800,lat:40.2,lon:-74.9,alt:37000,spd:268,hdg:258,vr:0},
+            {t:3600,lat:39.0,lon:-76.2,alt:37000,spd:268,hdg:258,vr:0}]},
+];
+
+// ════════════════════════════════════════════════════════════
+// MAP SETUP
+// ════════════════════════════════════════════════════════════
+const map=L.map('map',{center:[CFG.LAT0,CFG.LON0],zoom:8,zoomControl:true});
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',{
+  attribution:'© OpenStreetMap © CARTO',maxZoom:15,subdomains:'abcd',
+}).addTo(map);
+
+// Sector circle
+const sectorCircle=L.circle([CFG.LAT0,CFG.LON0],{
+  radius:CFG.R_NM*1852, color:'#4fb3f6', weight:1.5, fill:true,
+  fillColor:'#4fb3f6', fillOpacity:0.04, dashArray:'12 6',
+}).addTo(map);
+L.circleMarker([CFG.LAT0,CFG.LON0],{radius:4,color:'#4fb3f6',fillColor:'#4fb3f6',fillOpacity:0.8,weight:1}).addTo(map);
+
+// Airports
+[{n:'EWR',la:40.693,lo:-74.174},{n:'JFK',la:40.641,lo:-73.778},
+ {n:'LGA',la:40.777,lo:-73.873},{n:'TEB',la:40.850,lo:-74.061},
+ {n:'HPN',la:41.067,lo:-73.708},{n:'PHL',la:39.873,lo:-75.242}
+].forEach(ap=>{
+  L.circleMarker([ap.la,ap.lo],{radius:4,color:'#334155',fillColor:'#1e293b',fillOpacity:1,weight:1.5}).addTo(map)
+   .bindTooltip(ap.n,{permanent:true,className:'ap-tip',direction:'right',offset:[7,-6]});
+});
+const apStyle=document.createElement('style');
+apStyle.textContent=`.ap-tip{background:#0d1b2e!important;border:1px solid #1e3354!important;
+  color:#8fa8cc!important;font-size:10px!important;font-family:'IBM Plex Mono',monospace!important;
+  padding:2px 5px!important;border-radius:3px!important;white-space:nowrap}
+.ap-tip::before,.leaflet-tooltip-left.ap-tip::before,.leaflet-tooltip-right.ap-tip::before{display:none!important}`;
+document.head.appendChild(apStyle);
+
+// ════════════════════════════════════════════════════════════
+// VIRTUAL MARKER POOL
+// Instead of one Leaflet marker per aircraft (breaks at 6000+),
+// we keep a small reusable pool and only assign markers to the
+// aircraft that are currently active (tStart≤t≤tEnd) and
+// inside the sector.  MAX_POOL caps DOM elements.
+// ════════════════════════════════════════════════════════════
+const MAX_POOL = 400;          // max simultaneous Leaflet markers
+const POOL = [];               // {marker, svgEl, labelEl, acId, isS}
+let trackSegs = [];            // altitude-colored polyline segments
+let popupAcId = null;
+let popupH = 0;
+
+// Active-aircraft state machine (incremental, seek-safe)
+let _sortedByStart = [];       // AIRCRAFT sorted by actual[0].t
+let _activeSet = new Map();    // acId → {ac, slotA, slotS}
+let _prevT = -1;
+let _nextAddIdx = 0;           // next index into _sortedByStart to add
+
+// Throttle expensive ops: conflict detection + HUD update at ≤8 Hz
+let _lastHeavy = -Infinity;
+const HEAVY_INTERVAL_MS = 125;
+let _lastConflicts = {conflicts:[], alerts:[], cong:[]};
+
+// ── Icon factory (shared SVG template) ────────────────────
+const ICON_HTML = `<svg class="ac-svg" viewBox="-14 -14 28 28" width="26" height="26">
+  <path d="M0,-12 L2,-3 L13,3.5 L13,6.5 L2,2.5 L2.5,9.5 L6.5,12 L6.5,14 L0,12 L-6.5,14 L-6.5,12 L-2.5,9.5 L-2,2.5 L-13,6.5 L-13,3.5 L-2,-3 Z"
+    fill="#c8dcf8" stroke="rgba(255,255,255,0.35)" stroke-width="0.6" stroke-linejoin="round"/>
+</svg>`;
+const SHARED_ICON = L.divIcon({className:'ac-icon-wrap',html:ICON_HTML,iconSize:[26,26],iconAnchor:[13,13]});
+
+// ── Pool management ────────────────────────────────────────
+function _makeSlot(){
+  const overlay = document.getElementById('label-overlay');
+  const marker = L.marker([0,0],{icon:SHARED_ICON,interactive:true,zIndexOffset:100,opacity:0});
+  marker.addTo(map);
+  const labelEl = document.createElement('div');
+  labelEl.className = 'conf-lbl';
+  overlay.appendChild(labelEl);
+  const slot = {marker, svgEl:null, labelEl, acId:null, isS:false};
+  // Wire click once — reads slot.acId at click time (always current assignment)
+  marker.on('add', ()=>{
+    if(marker._icon){
+      slot.svgEl = marker._icon.querySelector('.ac-svg');
+      marker._icon.style.cursor = 'pointer';
+      marker._icon.addEventListener('click', ()=>{ if(slot.acId) openPopup(slot.acId); });
+    }
+  });
+  // Fallback for browsers where 'add' fires before DOM insertion
+  requestAnimationFrame(()=>{
+    if(!slot.svgEl && marker._icon){
+      slot.svgEl = marker._icon.querySelector('.ac-svg');
+      marker._icon.style.cursor = 'pointer';
+    }
+  });
+  return slot;
+}
+
+function _acquireSlot(){
+  for(let s of POOL) if(!s.acId) return s;
+  if(POOL.length < MAX_POOL){ const s=_makeSlot(); POOL.push(s); return s; }
+  return null;  // pool full; aircraft won't be shown
+}
+
+function _releaseSlot(slot){
+  if(!slot) return;
+  slot.acId = null;
+  slot.isS = false;
+  if(slot.marker._icon) slot.marker._icon.style.opacity='0';
+  slot.labelEl.style.display='none';
+}
+
+function _releaseAllSlots(){
+  POOL.forEach(s=>_releaseSlot(s));
+}
+
+// ── Time-sorted index rebuild ──────────────────────────────
+function _buildIndex(){
+  _sortedByStart = [...AIRCRAFT].sort((a,b)=>a.actual[0].t - b.actual[0].t);
+  _activeSet.clear();
+  _prevT = -1;
+  _nextAddIdx = 0;
+  _releaseAllSlots();
+  clearTrack();
+}
+
+// ── Update active set for time t ──────────────────────────
+function _getWpts(ac){ return STATE.mode==='sim'&&ac.sim ? ac.sim : ac.actual; }
+
+function _updateActive(t){
+  const seeking = t < _prevT - 1;   // jumped backwards?
+
+  if(seeking){
+    // Full rebuild: release all slots, re-scan from start
+    _activeSet.forEach(e=>{ _releaseSlot(e.slotA); _releaseSlot(e.slotS); });
+    _activeSet.clear();
+    _nextAddIdx = 0;
+  }
+
+  _prevT = t;
+
+  // Add newly entered aircraft (walk forward in time-sorted list)
+  while(_nextAddIdx < _sortedByStart.length){
+    const ac = _sortedByStart[_nextAddIdx];
+    if(ac.actual[0].t > t) break;   // not started yet
+    if(!_activeSet.has(ac.id)){
+      const tEnd = _getWpts(ac);
+      _activeSet.set(ac.id,{ac, slotA:null, slotS:null, tEnd: ac.actual[ac.actual.length-1].t});
+    }
+    _nextAddIdx++;
+  }
+
+  // Remove expired aircraft & release their slots
+  for(const [id, entry] of _activeSet){
+    const wpts = _getWpts(entry.ac);
+    if(t > wpts[wpts.length-1].t){
+      _releaseSlot(entry.slotA); _releaseSlot(entry.slotS);
+      _activeSet.delete(id);
+      if(popupAcId===id) closePopup();
+    }
+  }
+}
+
+// ── Init: rebuild index for current AIRCRAFT array ────────
+function initLayers(){
+  closePopup();
+  _buildIndex();
+  render(STATE.t);
+}
+
+// ════════════════════════════════════════════════════════════
+// ALTITUDE-COLORED TRACK (only selected aircraft)
+// ════════════════════════════════════════════════════════════
+function clearTrack(){
+  trackSegs.forEach(s=>map.removeLayer(s));
+  trackSegs=[];
+  document.getElementById('alt-legend').style.display='none';
+}
+
+function drawTrack(acId){
+  clearTrack();
+  const ac=AIRCRAFT.find(a=>a.id===acId);
+  if(!ac) return;
+  const wpts = STATE.mode==='sim' ? (ac.sim||ac.actual) : ac.actual;
+  const STEP=20; // seconds
+  const t0=wpts[0].t, t1=wpts[wpts.length-1].t;
+  for(let t=t0;t<t1-STEP/2;t+=STEP){
+    const p1=interp(wpts,t), p2=interp(wpts,t+STEP);
+    if(!p1||!p2) continue;
+    if(!inSector(p1.lat,p1.lon)&&!inSector(p2.lat,p2.lon)) continue;
+    const midAlt=(p1.alt+p2.alt)/2;
+    const seg=L.polyline([[p1.lat,p1.lon],[p2.lat,p2.lon]],{
+      color:altColor(midAlt), weight:3.5, opacity:0.88, lineCap:'round',
+    }).addTo(map);
+    trackSegs.push(seg);
+  }
+  document.getElementById('alt-legend').style.display='block';
+}
+
+// ════════════════════════════════════════════════════════════
+// POPUP (follows aircraft each frame)
+// ════════════════════════════════════════════════════════════
+const popup=document.getElementById('ac-popup');
+function openPopup(id){
+  if(popupAcId===id){ closePopup(); return; }
+  const ac = AIRCRAFT.find(a=>a.id===id);
+  if(!ac) return;
+  popupAcId = id;
+  STATE.selId = id;
+  drawTrack(id);
+  popup.style.display = 'block';
+  popupH = 0;
+  refreshPopup(STATE.t);
+}
+function closePopup(){
+  popupAcId=null; STATE.selId=null;
+  popup.style.display='none';
+  clearTrack();
+}
+function positionPopup(lat,lon){
+  const pt=map.latLngToContainerPoint(L.latLng(lat,lon));
+  if(!popupH) popupH=popup.offsetHeight||190;
+  popup.style.left=(pt.x)+'px';
+  popup.style.top=(pt.y-popupH-14)+'px';
+}
+function refreshPopup(t){
+  const ac=AIRCRAFT.find(a=>a.id===popupAcId);
+  if(!ac) return;
+  const wpts=STATE.mode==='sim'?(ac.sim||ac.actual):ac.actual;
+  const s=interp(wpts,t);
+  if(!s) return;
+  positionPopup(s.lat,s.lon);
+  document.getElementById('pop-cs').textContent=ac.callsign;
+  const modelLine = [ac.airline||ac.operator, ac.model||ac.description, ac.type].filter(Boolean).join(' · ');
+  document.getElementById('pop-type').textContent = modelLine || ac.reg || 'Unknown aircraft';
+  document.getElementById('pv-lat').textContent=`${s.lat.toFixed(5)}°N`;
+  document.getElementById('pv-lon').textContent=`${Math.abs(s.lon).toFixed(5)}°W`;
+  const altFt=Math.round(s.alt);
+  const altEl=document.getElementById('pv-alt');
+  altEl.textContent=altFt>50?`${altFt.toLocaleString()} ft`:'Ground';
+  altEl.style.color=altColor(altFt);
+  document.getElementById('pv-fl').textContent=altFt>1000?`FL${Math.round(altFt/100)}`:'—';
+  const gs=Math.round(s.spd);
+  document.getElementById('pv-gs').textContent=gs>0?`${gs} kts`:'0 kts';
+  document.getElementById('pv-as').textContent=gs>0?`~${Math.round(gs+s.alt/3500)} kts`:'—';
+  const hdg=Math.round(((s.hdg%360)+360)%360);
+  document.getElementById('pv-hdg').textContent=`${String(hdg).padStart(3,'0')}° ${hdgCompass(hdg)}`;
+  const vr=Math.round(s.vr);
+  const vrEl=document.getElementById('pv-vr');
+  vrEl.textContent=Math.abs(vr)<50?'Level':(vr>0?`+${vr.toLocaleString()}`:`${vr.toLocaleString()}`) + ' fpm';
+  vrEl.className='pop-val'+(vr>200?' pop-ok':vr<-200?' pop-warn':'');
+  const tt=trajType(wpts);
+  const tm=TRAJ_META[tt];
+  const tb=document.getElementById('pv-traj-badge');
+  tb.className='pop-traj-badge '+tm.cls;
+  tb.textContent=tm.label;
+  document.getElementById('pv-traj-desc').textContent=tm.desc;
+}
+
+// ════════════════════════════════════════════════════════════
+// CONFLICT DETECTION
+// ════════════════════════════════════════════════════════════
+function detectConflicts(states){
+  const conflicts=[],alerts=[],cong=[];
+  const vis=states.filter(s=>s&&s.inSector);
+  for(let i=0;i<vis.length;i++){
+    let nearby=1;
+    for(let j=0;j<vis.length;j++){
+      if(i===j) continue;
+      const d=havNm(vis[i].lat,vis[i].lon,vis[j].lat,vis[j].lon);
+      if(d<CFG.CONG_NM) nearby++;
+      if(j>i){
+        const v=Math.abs(vis[i].alt-vis[j].alt);
+        if(d<CFG.SEP_NM&&v<CFG.SEP_FT)
+          conflicts.push({ids:[vis[i].id,vis[j].id],la:(vis[i].lat+vis[j].lat)/2,lo:(vis[i].lon+vis[j].lon)/2,d:d.toFixed(1),v:v.toFixed(0)});
+        else if(d<CFG.ALERT_NM&&v<CFG.ALERT_FT)
+          alerts.push({ids:[vis[i].id,vis[j].id],d:d.toFixed(1),v:v.toFixed(0)});
+      }
+    }
+    if(nearby>=CFG.CONG_N) cong.push(vis[i].id);
+  }
+  return{conflicts,alerts,cong};
+}
+
+// ════════════════════════════════════════════════════════════
+// RENDER FRAME  (virtualised — only active aircraft processed)
+// ════════════════════════════════════════════════════════════
+function render(t, wallNow){
+  const showA = STATE.mode==='actual'||STATE.mode==='compare';
+  const showS = STATE.mode==='sim'   ||STATE.mode==='compare';
+  const isCompare = STATE.mode==='compare';
+
+  // ── 1. Update active set ──────────────────────────────────
+  _updateActive(t);
+
+  // ── 2. Per-aircraft position update (runs every RAF) ──────
+  const primaryStates = [];   // for conflict detection
+
+  for(const [id, entry] of _activeSet){
+    const {ac} = entry;
+    const wpts  = _getWpts(ac);
+    const state = interp(wpts, t);
+    if(!state) continue;
+    state.id = id;
+    state.inSector = inSector(state.lat, state.lon);
+    if(!state.inSector) continue;
+    primaryStates.push(state);
+
+    // Assign pool slot (actual)
+    if(showA){
+      if(!entry.slotA || !entry.slotA.acId){
+        entry.slotA = _acquireSlot();
+        if(entry.slotA) entry.slotA.acId = id;
+      }
+      _updateSlot(entry.slotA, state, isCompare ? 0.75 : 1.0);
+    } else if(entry.slotA){ _releaseSlot(entry.slotA); entry.slotA=null; }
+
+    // Assign pool slot (sim — only if different from actual)
+    if(showS && ac.sim){
+      const simState = interp(ac.sim, t);
+      if(simState && inSector(simState.lat, simState.lon)){
+        if(!entry.slotS || !entry.slotS.acId){
+          entry.slotS = _acquireSlot();
+          if(entry.slotS) entry.slotS.acId = id;
+        }
+        _updateSlot(entry.slotS, simState, isCompare ? 0.5 : 1.0);
+      }
+    } else if(entry.slotS){ _releaseSlot(entry.slotS); entry.slotS=null; }
+  }
+
+  // ── 3. Expensive ops: conflict detection + HUD (throttled) ─
+  const now = wallNow || performance.now();
+  if(now - _lastHeavy >= HEAVY_INTERVAL_MS){
+    _lastHeavy = now;
+    _lastConflicts = detectConflicts(primaryStates);
+    const {conflicts, alerts, cong} = _lastConflicts;
+    const conflictIds = new Set(conflicts.flatMap(c=>c.ids));
+    const alertIds    = new Set(alerts.flatMap(c=>c.ids));
+    const congIds     = new Set(cong);
+
+    // Update floating labels for all active aircraft
+    for(const [id, entry] of _activeSet){
+      const wpts = _getWpts(entry.ac);
+      const state = interp(wpts, t);
+      if(!state || !inSector(state.lat, state.lon)){
+        // Hide label via whichever slot owns it
+        const slot = entry.slotA || entry.slotS;
+        if(slot) slot.labelEl.style.display='none';
+        continue;
+      }
+      const isConf  = conflictIds.has(id);
+      const isAlert = alertIds.has(id);
+      const isCong  = congIds.has(id);
+      const slot = entry.slotA || entry.slotS;
+      if(!slot) continue;
+
+      if(isConf || isAlert || isCong){
+        const pt  = map.latLngToContainerPoint([state.lat, state.lon]);
+        const hdg = Math.round(((state.hdg%360)+360)%360);
+        const altFt = Math.round(state.alt);
+        const cls = isConf ? 'lbl-danger' : isAlert ? 'lbl-warn' : 'lbl-cong';
+        slot.labelEl.className = 'conf-lbl ' + cls;
+        slot.labelEl.style.left = pt.x + 'px';
+        slot.labelEl.style.top  = pt.y + 'px';
+        slot.labelEl.style.display = 'block';
+        slot.labelEl.innerHTML =
+          `<div class="lbl-cs">${isConf?'⚠ ':''}${entry.ac.callsign}</div>`+
+          `<div class="lbl-row">ALT ${altFt.toLocaleString()} ft · SPD ${Math.round(state.spd)} kts</div>`+
+          `<div class="lbl-row">HDG ${String(hdg).padStart(3,'0')}° ${hdgCompass(hdg)}</div>`+
+          `<div class="lbl-row">${state.lat.toFixed(4)}°N ${Math.abs(state.lon).toFixed(4)}°W</div>`;
+      } else {
+        slot.labelEl.style.display = 'none';
+      }
+    }
+
+    // Alerts HUD
+    const hud = document.getElementById('alerts-hud');
+    const lines = [];
+    conflicts.forEach(c=>{
+      lines.push(`<div class="alert-chip chip-danger"><div class="chip-dot dot-d"></div>⚠ LOS: ${c.ids[0]} ↔ ${c.ids[1]} · ${c.d}nm / ${c.v}ft</div>`);
+    });
+    if(alerts.length) lines.push(`<div class="alert-chip chip-warn"><div class="chip-dot dot-w"></div>${alerts.length} proximity alert${alerts.length>1?'s':''}</div>`);
+    if(congIds.size) lines.push(`<div class="alert-chip chip-cong"><div class="chip-dot dot-c"></div>Congestion: ${congIds.size} aircraft &lt;${CFG.CONG_NM}nm</div>`);
+    if(!lines.length && primaryStates.length)
+      lines.push(`<div class="alert-chip chip-ok"><div class="chip-dot dot-ok"></div>All clear · ${primaryStates.length} aircraft</div>`);
+    hud.innerHTML = lines.join('');
+
+    const cf = conflicts.length;
+    document.getElementById('stat-ac').innerHTML = `In sector: <b>${primaryStates.length}</b>`;
+    document.getElementById('stat-cf').innerHTML = `Conflicts: <b style="color:${cf?'var(--danger)':'var(--ok)'}">${cf}</b>`;
+    document.getElementById('stat-md').innerHTML = `Mode: <b>${STATE.mode.toUpperCase()}</b>`;
+  }
+
+  // ── 4. Clock + scrubber (every frame, cheap) ───────────────
+  document.getElementById('utc').textContent     = utcOf(t);
+  document.getElementById('t-cur').textContent   = fmtT(t);
+  document.getElementById('scrubber').value      = t;
+
+  // ── 5. Popup follows its aircraft ──────────────────────────
+  if(popupAcId) refreshPopup(t);
+}
+
+// Update one pool slot: position, rotation, opacity
+function _updateSlot(slot, state, opacity){
+  if(!slot) return;
+  slot.marker.setLatLng([state.lat, state.lon]);
+  if(slot.marker._icon){
+    if(!slot.svgEl) slot.svgEl = slot.marker._icon.querySelector('.ac-svg');
+    slot.marker._icon.style.opacity = opacity;
+    slot.marker._icon.style.pointerEvents = 'auto';
+    if(slot.svgEl) slot.svgEl.style.transform = `rotate(${state.hdg}deg)`;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
+// ANIMATION LOOP
+// ════════════════════════════════════════════════════════════
+function tick(wall){
+  if(STATE.playing){
+    if(STATE.lastWall!=null){
+      const dt=(wall-STATE.lastWall)/1000;
+      STATE.t=Math.min(STATE.dur,STATE.t+dt*STATE.speed);
+      if(STATE.t>=STATE.dur){
+        STATE.t=STATE.dur; STATE.playing=false;
+        document.getElementById('play-btn').textContent='▶';
+      }
+    }
+    STATE.lastWall=wall;
+  }
+  render(STATE.t, wall);
+  requestAnimationFrame(tick);
+}
+
+// Reposition popup/labels on map pan/zoom too
+map.on('move zoom',()=>render(STATE.t));
+
+// ════════════════════════════════════════════════════════════
+// CONTROLS
+// ════════════════════════════════════════════════════════════
+function togglePlay(){
+  STATE.playing=!STATE.playing;
+  STATE.lastWall=null;
+  if(STATE.t>=STATE.dur&&STATE.playing) STATE.t=0;
+  document.getElementById('play-btn').textContent=STATE.playing?'⏸':'▶';
+}
+function seek(t){
+  STATE.t=Math.max(0,Math.min(STATE.dur,t));
+  STATE.lastWall=null;
+  render(STATE.t);
+}
+function onScrub(v){ STATE.t=+v; STATE.lastWall=null; render(STATE.t); }
+function setSpeed(s,btn){
+  STATE.speed=s;
+  document.querySelectorAll('.spdbtn').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+}
+function setMode(m){
+  STATE.mode = m;
+  ['actual','sim','compare'].forEach(id=>
+    document.getElementById('btn-'+id).classList.toggle('active', id===m));
+  // Release all pool slots so they get re-assigned in new mode
+  _releaseAllSlots();
+  _activeSet.forEach(e=>{ e.slotA=null; e.slotS=null; });
+  if(STATE.selId) drawTrack(STATE.selId);
+  render(STATE.t);
+}
+
+// ════════════════════════════════════════════════════════════
+// IMPORT MODAL  (async-safe, handles grouped JSON from preprocess_adsb.py)
+// ════════════════════════════════════════════════════════════
+let pendingText = null;   // set only after FileReader completes
+let fileReadBusy = false;
+
+function openModal(){
+  pendingText = null;
+  fileReadBusy = false;
+  document.getElementById('load-status').innerHTML = '';
+  document.getElementById('paste-area').value = '';
+  const inp = document.getElementById('file-inp');
+  if(inp) inp.value = '';
+  setBtnLoading(false);
+  document.getElementById('modal-mask').classList.add('open');
+}
+function closeModal(){
+  document.getElementById('modal-mask').classList.remove('open');
+  pendingText = null;
+  fileReadBusy = false;
+}
+function showMTab(i,btn){
+  document.querySelectorAll('.tab-panel').forEach((p,j)=>p.classList.toggle('active',j===i));
+  document.querySelectorAll('.mtab').forEach((b,j)=>b.classList.toggle('active',j===i));
+}
+function setStatus(html){ document.getElementById('load-status').innerHTML = html; }
+function setBtnLoading(busy){
+  const btn = document.querySelector('.btn-load');
+  if(!btn) return;
+  btn.disabled = busy;
+  btn.textContent = busy ? 'Loading…' : 'Load Data';
+  btn.style.opacity = busy ? '0.6' : '';
+}
+
+// ── File picker handler (async – updates pendingText when done) ────────────
+function onFileLoad(inp){
+  const file = inp.files[0];
+  if(!file) return;
+  pendingText = null;
+  fileReadBusy = true;
+  setBtnLoading(true);
+  setStatus(`<span style="color:var(--txt1)">Reading ${file.name} (${(file.size/1024/1024).toFixed(1)} MB)…</span>`);
+
+  const reader = new FileReader();
+  reader.onload = e => {
+    pendingText = e.target.result;
+    fileReadBusy = false;
+    setBtnLoading(false);
+    setStatus(`<span class="status-ok">✓ Ready: ${file.name} · ${(file.size/1024/1024).toFixed(1)} MB · click Load Data</span>`);
+  };
+  reader.onerror = () => {
+    fileReadBusy = false;
+    setBtnLoading(false);
+    setStatus(`<span class="status-err">Failed to read file.</span>`);
+  };
+  reader.readAsText(file);
+}
+
+// ── Load Data button ──────────────────────────────────────────────────────
+function doLoad(){
+  if(fileReadBusy){
+    setStatus('<span class="status-err">Still reading file — please wait a moment and try again.</span>');
+    return;
+  }
+  const text = pendingText || document.getElementById('paste-area').value.trim();
+  if(!text){
+    setStatus('<span class="status-err">No data yet. Choose a file and wait for the green confirmation before clicking Load Data.</span>');
+    return;
+  }
+  setBtnLoading(true);
+  setStatus('<span style="color:var(--txt1)">Parsing…</span>');
+
+  // Yield to paint, then parse (blocks main thread briefly for JSON.parse)
+  const prog = document.getElementById('parse-progress');
+  const bar  = document.getElementById('parse-bar');
+  const lbl  = document.getElementById('parse-label');
+  if(prog){ prog.style.display='block'; bar.style.width='0%'; lbl.textContent='Parsing JSON…'; }
+
+  setTimeout(()=>{
+    try{
+      if(prog) bar.style.width = '40%';
+      const raw = JSON.parse(text.trim().startsWith('[') || text.trim().startsWith('{') ? text : '[]');
+      if(prog){ bar.style.width='70%'; lbl.textContent='Building aircraft tracks…'; }
+
+      // Use small timeout so browser can paint the 70% bar
+      setTimeout(()=>{
+        try{
+          const aircraft = parseADSB(text);
+          if(!aircraft || aircraft.length === 0) throw new Error('No valid aircraft found in file.');
+          if(prog){ bar.style.width='100%'; lbl.textContent=`${aircraft.length} aircraft loaded.`; }
+          setStatus(`<span class="status-ok">✓ Loaded ${aircraft.length} aircraft · ${fmtT(Math.max(...aircraft.map(a=>a.actual[a.actual.length-1].t)))} duration</span>`);
+          loadAircraft(aircraft);
+          setTimeout(closeModal, 900);
+        }catch(err2){
+          setBtnLoading(false);
+          if(prog) prog.style.display='none';
+          setStatus(`<span class="status-err">Parse error: ${err2.message}</span>`);
+        }
+      }, 30);
+    }catch(err){
+      setBtnLoading(false);
+      if(prog) prog.style.display='none';
+      setStatus(`<span class="status-err">JSON parse error: ${err.message}</span>`);
+    }
+  }, 30);
+}
+
+// ── Parser: handles grouped JSON (from preprocess_adsb.py v3) ─────────────
+// Also handles flat JSON array and CSV for backwards compatibility.
+function parseADSB(text){
+  const trimmed = text.trim();
+
+  // ── JSON ────────────────────────────────────────────────────────────────
+  if(trimmed.startsWith('[') || trimmed.startsWith('{')){
+    const records = JSON.parse(trimmed);
+    const arr = Array.isArray(records) ? records : [records];
+    if(!arr.length) throw new Error('Empty JSON array.');
+
+    const first = arr[0];
+
+    // ── Grouped format from preprocess_adsb.py v3 ──────────────────────
+    // Each element has an "actual" array of compact waypoints {t,lat,lon,alt,spd,hdg,vr}
+    if(first.actual || first.waypoints){
+      return arr.map(r=>{
+        const wpts = (r.actual || r.waypoints || []);
+        return {
+          id:       r.id || r.icao24 || r.callsign || 'UNKN',
+          callsign: (r.callsign || r.id || r.icao24 || 'UNKN').trim(),
+          // Python v3 outputs aircraft_type; older formats use type
+          type:     r.aircraft_type || r.type || '',
+          airline:  r.operator || r.airline || '',
+          model:    r.description || '',
+          reg:      r.registration || r.r || '',
+          actual: wpts.map(w=>({
+            t:   +(w.t   ?? w.timestamp ?? 0),
+            lat: +w.lat,
+            lon: +w.lon,
+            alt: +(w.alt ?? w.altitude_ft ?? 0),
+            spd: +(w.spd ?? w.speed_kts  ?? 0),
+            hdg: +(w.hdg ?? w.heading_deg ?? 0),
+            vr:  +(w.vr  ?? w.vertical_rate_fpm ?? 0),
+          })).filter(w=>isFinite(w.lat)&&isFinite(w.lon)),
+          sim: r.sim ? r.sim.map(w=>({
+            t:+(w.t??0),lat:+w.lat,lon:+w.lon,
+            alt:+(w.alt??0),spd:+(w.spd??0),hdg:+(w.hdg??0),vr:+(w.vr??0),
+          })) : null,
+        };
+      }).filter(ac=>ac.actual.length >= 2);
+    }
+
+    // ── Flat JSON array (one record per ping) ───────────────────────────
+    // Produced by preprocess_adsb.py --csv converted back, or old format
+    const groups={};
+    arr.forEach(r=>{
+      const id = r.icao24||r.hex||r.callsign||'UNKN';
+      if(!groups[id]) groups[id]=[];
+      groups[id].push(r);
+    });
+    const allTs = arr.map(r=>r.timestamp||r.ts||0).filter(Boolean);
+    const minT  = allTs.length ? Math.min(...allTs) : 0;
+    return Object.entries(groups).map(([id,recs])=>{
+      recs.sort((a,b)=>(a.timestamp||0)-(b.timestamp||0));
+      return {
+        id, callsign:(recs[0].callsign||id).trim(),
+        type: recs[0].aircraft_type||recs[0].type||'',
+        airline: recs[0].operator||recs[0].airline||'',
+        actual: recs.map(r=>({
+          t:   (r.timestamp||r.ts||0) - minT,
+          lat: +r.lat, lon: +r.lon,
+          alt: +(r.altitude_ft??r.alt??0),
+          spd: +(r.speed_kts??r.spd??0),
+          hdg: +(r.heading_deg??r.hdg??0),
+          vr:  +(r.vertical_rate_fpm??r.vr??0),
+        })).filter(w=>isFinite(w.lat)&&isFinite(w.lon)),
+      };
+    }).filter(ac=>ac.actual.length>=2);
+  }
+
+  // ── CSV (flat, one row per ping) ────────────────────────────────────────
+  const lines  = trimmed.split('\n');
+  const header = lines[0].toLowerCase().replace(/\r/g,'').split(',');
+  const col    = k => header.indexOf(k);
+  const recs   = lines.slice(1).map(l=>{
+    const f = l.replace(/\r/g,'').split(',');
+    return {
+      timestamp: +(f[col('timestamp')]||f[col('ts')]||0),
+      icao24:    f[col('icao24')]||f[col('hex')]||'',
+      callsign:  (f[col('callsign')]||'').trim(),
+      lat:  +f[col('lat')], lon: +f[col('lon')],
+      alt:  +(f[col('altitude_ft')]??f[col('alt')]??0),
+      spd:  +(f[col('speed_kts')]??f[col('spd')]??0),
+      hdg:  +(f[col('heading_deg')]??f[col('hdg')]??0),
+      vr:   +(f[col('vertical_rate_fpm')]??f[col('vr')]??0),
+    };
+  }).filter(r=>isFinite(r.lat)&&r.lat!==0&&isFinite(r.lon)&&r.lon!==0);
+
+  const groups={};
+  recs.forEach(r=>{
+    const id=r.icao24||r.callsign||'UNKN';
+    if(!groups[id]) groups[id]=[];
+    groups[id].push(r);
+  });
+  const minT = Math.min(...recs.map(r=>r.timestamp).filter(Boolean), 0);
+  return Object.entries(groups).map(([id,rs])=>{
+    rs.sort((a,b)=>a.timestamp-b.timestamp);
+    return {
+      id, callsign:(rs[0].callsign||id).trim(), type:'', airline:'',
+      actual: rs.map(r=>({t:r.timestamp-minT,lat:r.lat,lon:r.lon,alt:r.alt,spd:r.spd,hdg:r.hdg,vr:r.vr})),
+    };
+  }).filter(ac=>ac.actual.length>=2);
+}
+
+function guessType(cs){
+  const p=(cs||'').replace(/[0-9\s]+$/,'').toUpperCase();
+  return {UAL:'B737',DAL:'A320',AAL:'B738',SWA:'B737',JBU:'A321',
+    NKS:'A320',SKW:'E175',FDX:'B763',UPS:'B744',DHL:'B763'}[p]||'UNKN';
+}
+function guessAirline(cs){
+  const p=(cs||'').replace(/[0-9\s]+$/,'').toUpperCase();
+  return {UAL:'United',DAL:'Delta',AAL:'American',SWA:'Southwest',JBU:'JetBlue',
+    NKS:'Spirit',SKW:'SkyWest',FDX:'FedEx',UPS:'UPS',DHL:'DHL'}[p]||'';
+}
+
+function loadAircraft(aircraft){
+  closePopup();
+  AIRCRAFT = aircraft;
+
+  // Duration: max t across all waypoints
+  let maxT = 3600;
+  for(const ac of aircraft){
+    const wpts = ac.actual;
+    if(wpts.length) maxT = Math.max(maxT, wpts[wpts.length-1].t);
+    if(ac.sim && ac.sim.length) maxT = Math.max(maxT, ac.sim[ac.sim.length-1].t);
+  }
+  STATE.dur = maxT;
+  STATE.t = 0; STATE.playing = false; STATE.lastWall = null;
+  document.getElementById('play-btn').textContent = '▶';
+  document.getElementById('t-end').textContent    = fmtT(STATE.dur);
+  document.getElementById('scrubber').max         = STATE.dur;
+
+  // Update header subtitle
+  const hasSim = aircraft.some(a=>a.sim);
+  document.querySelector('#title em').textContent =
+    `${aircraft.length} aircraft · ${fmtT(STATE.dur)} · ${hasSim?'actual + RL sim':'actual only'}`;
+
+  // Re-centre map on sector centre
+  map.setView([CFG.LAT0, CFG.LON0], 8);
+
+  // Rebuild time index and pool — this is the NEW initLayers
+  _buildIndex();
+  render(0);
+}
+
+// ════════════════════════════════════════════════════════════
+// INIT
+// ════════════════════════════════════════════════════════════
+document.getElementById('t-end').textContent = fmtT(STATE.dur);
+document.getElementById('scrubber').max = STATE.dur;
+initLayers();
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>
