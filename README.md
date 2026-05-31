@@ -172,6 +172,7 @@ At each step:
 ### Free ADS-B Data Sources
 | Source | URL | Notes |
 |--------|-----|-------|
+| FlightPathAnalysis notebook | https://github.com/SNaveenMathew/FlightPathAnalysis/blob/main/01-Downloaders/01-fetch_live_adsb_data.ipynb | Live ADS-B download notebook |
 | OpenSky Network | https://opensky-network.org | REST API + history |
 | ADS-B Exchange | https://www.adsbexchange.com/data | Community feed |
 | dump1090 | https://github.com/antirez/dump1090 | Local SDR receiver |
