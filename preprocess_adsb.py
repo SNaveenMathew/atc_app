@@ -3,7 +3,7 @@
 preprocess_adsb.py  (v3)
 ─────────────────────────
 Converts raw ADS-B CSV to the compact grouped-per-aircraft JSON format
-expected by adsb_viz2.html.
+expected by adsb_viz.html.
 
 Why grouped?
   Raw CSV:     1,646 MB  (one row per ping, every field repeated)
@@ -237,8 +237,8 @@ with open(out_path, "w") as fh:
 size_mb = out_path.stat().st_size / 1024 / 1024
 elapsed = time.time() - t0
 print(f"\nDone in {elapsed:.1f}s  →  {out_path}  ({size_mb:.1f} MB)")
-print(f"\nLoad into adsb_viz2.html:")
-print(f"  1. Open adsb_viz2.html in your browser")
+print(f"\nLoad into adsb_viz.html:")
+print(f"  1. Open adsb_viz.html in your browser")
 print(f"  2. Click 'Import Data'  →  'Upload File'  →  select  {out_path.name}")
 print(f"  3. Click 'Load Data'")
 print(f"\nIf the file is still >100 MB, run again with a higher decimate value:")
